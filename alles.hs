@@ -398,6 +398,7 @@ balance t = balanceList $ makeList t
 
 data BinTree a b = BinNode a (BinTree a b) (BinTree a b)
                  | BinLeaf b
+                   deriving Show
 
 data Unit = Unit
 
@@ -411,37 +412,102 @@ pp (BinLeaf d) = RoseNode (show d) []
 
 --variant 1
 
-number :: Integer -> (BinTree String Integer)
-number i = BinLeaf i
+data Singular   = SNumber Double
+                | SVariable String
+                  deriving Show
 
-op :: (BinTree String Integer) -> String -> (BinTree String Integer) -> (BinTree String Integer)
-op left o right = BinNode o left right
+type Expression = BinTree String Singular
 
-expect :: Char -> (String, f) -> (String, f)
-expect exp ((c:cs), f) | exp == c       = (cs, f)
-                       | otherwise      = error ("Parse error, expected " ++ [c])
+data Token      = OpenParen 
+                | CloseParen
+                | Operator String
+                | Number Double
+                | Identifier String
+                  deriving (Show, Eq)
 
-parseInteger :: (String, (BinTree String Integer) -> a) -> (String, a)
-parseInteger (('0':s), f) = (s, f $ BinLeaf 0)
-parseInteger (('1':s), f) = (s, f $ BinLeaf 1)
-parseInteger (('2':s), f) = (s, f $ BinLeaf 2)
-parseInteger (('3':s), f) = (s, f $ BinLeaf 3)
-parseInteger (('4':s), f) = (s, f $ BinLeaf 4)
-parseInteger (('5':s), f) = (s, f $ BinLeaf 5)
-parseInteger (('6':s), f) = (s, f $ BinLeaf 6)
-parseInteger (('7':s), f) = (s, f $ BinLeaf 7)
-parseInteger (('8':s), f) = (s, f $ BinLeaf 8)
-parseInteger (('9':s), f) = (s, f $ BinLeaf 9)
+num :: Char -> Bool
+num c = elem c "0123456789"
 
-parseOp :: (String, String -> a) -> (String, a)
-parseOp (('+':s), f) = (s, f "+")
-parseOp (('-':s), f) = (s, f "-")
-parseOp (('*':s), f) = (s, f "*")
-parseOp (('/':s), f) = (s, f "/")
+float :: Char -> Bool
+float c = c == '.' || num c
 
-parseExpr :: (String, (BinTree String Integer) -> a) -> (String, a)
-parseExpr (('(':s), f) = f $ expect ')' $ parseExpr (s, op)
-parseExpr (s, f) = f $ parseExpr $ parseOp $ parseInteger (s, op)
+lower :: Char -> Bool
+lower c = elem c ['a'..'z']
 
-parse :: String -> BinTree String Integer
-parse s = snd $ parseExpr (s, \x -> x)
+upper :: Char -> Bool
+upper c = elem c ['A'..'Z']
+
+alpha :: Char -> Bool
+alpha c = lower c || upper c
+
+alnum :: Char -> Bool
+alnum c = alpha c || num c
+
+op :: Char -> Bool
+op c = elem c "+-*/^=><"
+
+tokenize :: String -> [Token]
+tokenize ""     = []
+tokenize (x:xs) | float x                                   = Number (read (takeWhile float (x:xs)) :: Double)
+                                                              : (tokenize $ dropWhile float (x:xs))
+                | x == '('                                  = OpenParen : tokenize xs
+                | x == ')'                                  = CloseParen : tokenize xs
+                | op x                                      = (Operator $ takeWhile op (x:xs))
+                                                              : (tokenize $ dropWhile op (x:xs))
+                | alpha x                                   = (Identifier $ takeWhile alnum (x:xs))
+                                                              : (tokenize $ dropWhile alnum (x:xs))
+
+expect :: Token -> [Token] -> [Token]
+expect token (t:ts) | t == token = ts
+                    | otherwise  = error "Parse error"
+
+parseOp :: [Token] -> (String, [Token])
+parseOp ((Operator op):ts) = (op, ts)
+parseOp _ = error "Parse error"
+
+parseExpression :: [Token] -> (Expression, [Token])
+parseExpression (OpenParen:ts)      = (BinNode op left right, rest3)
+                                    where (left, rest0) = parseExpression ts
+                                          (op, rest1) = parseOp rest0
+                                          (right, rest2) = parseExpression rest1
+                                          rest3 = expect CloseParen rest2
+parseExpression ((Number n):ts)     = (BinLeaf (SNumber n), ts)
+parseExpression ((Identifier x):ts) = (BinLeaf (SVariable x), ts)
+parseExpression ((Operator "-"):ts) = (BinNode "-" (BinLeaf (SNumber 0.0)) right, rest0)
+                                    where (right, rest0) = parseExpression ts
+parseExpression _                   = error "Parse error"
+
+parse :: String -> Expression
+parse = fst . parseExpression . tokenize
+
+assign :: String -> Double -> Expression -> Expression
+assign s d (BinLeaf (SVariable var)) | var == s         = BinLeaf (SNumber d)
+                                     | otherwise        = BinLeaf (SVariable var)
+assign s d (BinNode op left right)   = BinNode op (assign s d left) (assign s d right)
+assign s d e                         = e
+
+eval :: Expression -> Double
+eval (BinLeaf (SNumber n))          = n
+eval (BinLeaf (SVariable v))        = error "Cannot evaluate an expression that has an unassigned variable"
+eval (BinNode op leftE rightE)      | op == "+"     = left + right
+                                    | op == "-"     = left - right
+                                    | op == "*"     = left * right
+                                    | op == "/"     = left / right
+                                    | op == "^"     = left ** right
+                                    | op == "<"     = if left < right then 1.0 else 0.0
+                                    | op == ">"     = if left > right then 1.0 else 0.0
+                                    | op == "<="    = if left <= right then 1.0 else 0.0
+                                    | op == ">="    = if left >= right then 1.0 else 0.0
+                                    | op == "+-"    = left - right
+                                      where left = eval leftE
+                                            right = eval rightE
+
+data Antwoord = Ja | Nee | Misschien deriving Show
+
+vrouw Ja = Misschien
+vrouw Nee = Misschien
+vrouw Misschien = Misschien
+
+man Ja = Ja
+man Misschien = Ja
+man Nee = Misschien
